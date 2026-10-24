@@ -23,6 +23,9 @@ RUN npm ci --omit=dev || npm install --omit=dev
 COPY index.js ./
 COPY src ./src
 COPY gladys-assistant-integration.json ./
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
+# The pairing helper, run once on the host network (see docs/en.md).
+COPY scripts/pair.mjs ./scripts/pair.mjs
 
 # The only writable location allowed at runtime. Docker creates a new volume
 # with the owner of the image's /data, so it must belong to `node`, and before

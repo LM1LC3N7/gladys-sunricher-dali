@@ -1,16 +1,19 @@
 {
-  "name": "gladys-integration-template-js",
-  "version": "1.0.0",
+  "name": "gladys-sunricher-dali",
+  "version": "0.1.0",
   "private": true,
-  "description": "Official starter template to build an external integration for Gladys Assistant with the JavaScript SDK.",
+  "description": "Gladys Assistant external integration for Sunricher DALI gateways (DALI Center, SR-GW-EDA): lights, groups, scenes and sensors over the local MQTT of the gateway. Unofficial, not affiliated with Sunricher.",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "pair": "node scripts/pair.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --test"
+    "test": "node --test",
+    "audit": "npm audit --omit=dev",
+    "validate:manifest": "npx --yes github:GladysAssistant/integration-store ."
   },
   "engines": {
     "node": ">=22"

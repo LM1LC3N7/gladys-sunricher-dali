@@ -1,177 +1,308 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Sunricher DALI",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Sunricher DALI gateways (DALI Center): lights, groups, scenes and sensors, locally.",
+    "fr": "Passerelles DALI Sunricher (DALI Center) : luminaires, groupes, scènes et capteurs, en local."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-sunricher-dali:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-sunricher-dali/main/cover.png",
+  "categories": ["lighting"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your DALI gateway",
+        "fr": "Votre passerelle DALI"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "For the Sunricher DALI gateways (SR-GW-EDA, DALI Center app). The integration talks to the gateway on your network through the gateway's own MQTT server: no cloud, no other broker. It reads the devices, groups and scenes configured on the gateway: DALI lights (on/off, brightness, colour temperature or colour), DALI groups, scenes (a button to recall each one), motion and light sensors; the keys of DALI-2 push button panels become scene triggers. The gateway gives its user name and password only at pairing: follow the guide (one command on a computer of your network, then the button of the gateway). One connection at a time. Never tested with a real gateway. Unofficial, not affiliated with Sunricher.",
+        "fr": "Pour les passerelles DALI Sunricher (SR-GW-EDA, application DALI Center). L'intégration dialogue avec la passerelle sur votre réseau par le serveur MQTT de la passerelle elle-même : pas de cloud, pas d'autre broker. Elle lit les appareils, groupes et scènes configurés sur la passerelle : luminaires DALI (allumage, luminosité, température de couleur ou couleur), groupes DALI, scènes (un bouton pour rappeler chacune), détecteurs de mouvement et capteurs de luminosité ; les touches des boutons poussoirs DALI-2 deviennent des déclencheurs de scène. La passerelle ne donne son nom d'utilisateur et son mot de passe qu'à l'appairage : suivez le guide (une commande sur un ordinateur de votre réseau, puis le bouton de la passerelle). Une seule connexion à la fois. Jamais testé avec une vraie passerelle. Non officiel, sans lien avec Sunricher."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-sunricher-dali/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide and pairing (French)",
+            "fr": "Guide et appairage (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-sunricher-dali/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide and pairing (English)",
+            "fr": "Guide et appairage (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "host",
+      "type": "string",
+      "label": {
+        "en": "Address of the gateway",
+        "fr": "Adresse de la passerelle"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "description": {
+        "en": "Its IP address on your network, as the pairing shows it; give it a fixed address in your router.",
+        "fr": "Son adresse IP sur votre réseau, telle que l'appairage l'affiche ; donnez-lui une adresse fixe dans votre box."
+      },
+      "placeholder": {
+        "en": "192.168.1.70",
+        "fr": "192.168.1.70"
+      },
+      "required": true
     },
     {
-      "key": "longitude",
+      "key": "port",
       "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "label": {
+        "en": "MQTT port of the gateway",
+        "fr": "Port MQTT de la passerelle"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "description": {
+        "en": "As the pairing shows it (1883 unless told otherwise).",
+        "fr": "Tel que l'appairage l'affiche (1883 sauf indication contraire)."
+      },
+      "required": false,
+      "default": 1883,
+      "min": 1,
+      "max": 65535
     },
     {
-      "key": "unit",
+      "key": "serial_number",
+      "type": "string",
+      "label": {
+        "en": "Serial number of the gateway",
+        "fr": "Numéro de série de la passerelle"
+      },
+      "description": {
+        "en": "As the pairing shows it (on the SR-GW-EDA, its MAC address in capitals without separators). The integration only takes the messages of this gateway.",
+        "fr": "Tel que l'appairage l'affiche (sur la SR-GW-EDA, son adresse MAC en majuscules sans séparateurs). L'intégration ne prend que les messages de cette passerelle."
+      },
+      "placeholder": {
+        "en": "A1B2C3D4E5F6",
+        "fr": "A1B2C3D4E5F6"
+      },
+      "required": true
+    },
+    {
+      "key": "username",
+      "type": "string",
+      "label": {
+        "en": "User name (from the pairing)",
+        "fr": "Nom d'utilisateur (de l'appairage)"
+      },
+      "required": true
+    },
+    {
+      "key": "password",
+      "type": "secret",
+      "label": {
+        "en": "Password (from the pairing)",
+        "fr": "Mot de passe (de l'appairage)"
+      },
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again, sent only to the gateway, never written in the logs. With TLS, sent only once the certificate of the gateway is checked.",
+        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la passerelle, jamais écrit dans les journaux. En TLS, envoyé seulement une fois le certificat de la passerelle vérifié."
+      },
+      "required": true
+    },
+    {
+      "key": "tls",
+      "type": "boolean",
+      "label": {
+        "en": "TLS (if the pairing says the gateway uses it)",
+        "fr": "TLS (si l'appairage indique que la passerelle l'utilise)"
+      },
+      "description": {
+        "en": "Without TLS, the user name and the password travel in clear on your network (plain MQTT, as the gateway works by default). With TLS, the certificate of the gateway is pinned on the first connection.",
+        "fr": "Sans TLS, le nom d'utilisateur et le mot de passe circulent en clair sur votre réseau (MQTT simple, comme la passerelle fonctionne par défaut). Avec TLS, le certificat de la passerelle est épinglé à la première connexion."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "tls_fingerprint",
+      "type": "string",
+      "label": {
+        "en": "Certificate fingerprint (TLS only)",
+        "fr": "Empreinte du certificat (TLS seulement)"
+      },
+      "description": {
+        "en": "Optional: the SHA-256 fingerprint of the gateway certificate. Empty, the first certificate seen is kept. If the certificate changes later, nothing is sent and the status shows the new fingerprint: enter it here only if you replaced or reset the gateway.",
+        "fr": "Facultatif : l'empreinte SHA-256 du certificat de la passerelle. Vide, le premier certificat vu est gardé. Si le certificat change ensuite, rien n'est envoyé et l'état affiche la nouvelle empreinte : saisissez-la ici seulement si vous avez remplacé ou réinitialisé la passerelle."
+      },
+      "placeholder": {
+        "en": "ab:cd:...",
+        "fr": "ab:cd:..."
+      },
+      "required": false
+    },
+    {
+      "key": "language",
       "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Language of the names",
+        "fr": "Langue des noms"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Used for the names of the devices and features added from now on, when the gateway gives no name.",
+        "fr": "Sert aux noms des appareils et fonctionnalités ajoutés désormais, quand la passerelle ne donne pas de nom."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
       "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
     }
   ],
   "scene_triggers": [
     {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
+      "key": "panel_button",
+      "label": {
+        "en": "DALI push button panel",
+        "fr": "Bouton poussoir DALI"
+      },
       "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+        "en": "A key of a DALI-2 push button panel of the gateway is pressed, held, double pressed, turned or released. The panel is written bus-address, as in the device names (0-12). Leave a field empty to match any value.",
+        "fr": "Une touche d'un bouton poussoir DALI-2 de la passerelle est appuyée, maintenue, appuyée deux fois, tournée ou relâchée. Le bouton s'écrit bus-adresse, comme dans les noms des appareils (0-12). Laissez un champ vide pour accepter toute valeur."
       },
       "fields": [
         {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
+          "key": "panel",
+          "type": "string",
+          "label": {
+            "en": "Panel (bus-address, e.g. 0-12)",
+            "fr": "Bouton (bus-adresse, ex. 0-12)"
+          }
         },
         {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
+          "key": "button",
+          "type": "number",
+          "label": {
+            "en": "Key number",
+            "fr": "Numéro de touche"
+          },
+          "min": 0,
+          "max": 16
+        },
+        {
+          "key": "event",
+          "type": "select",
+          "label": {
+            "en": "Event",
+            "fr": "Événement"
+          },
           "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
+            {
+              "value": "press",
+              "label": {
+                "en": "Pressed",
+                "fr": "Appuyé"
+              }
+            },
+            {
+              "value": "hold",
+              "label": {
+                "en": "Held",
+                "fr": "Maintenu"
+              }
+            },
+            {
+              "value": "double_press",
+              "label": {
+                "en": "Double pressed",
+                "fr": "Appuyé deux fois"
+              }
+            },
+            {
+              "value": "rotate",
+              "label": {
+                "en": "Turned (rotary knob)",
+                "fr": "Tourné (bouton rotatif)"
+              }
+            },
+            {
+              "value": "release",
+              "label": {
+                "en": "Released",
+                "fr": "Relâché"
+              }
+            }
           ]
         }
       ],
       "variables": [
         {
-          "key": "target",
+          "key": "panel",
           "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
+          "label": {
+            "en": "Panel (bus-address)",
+            "fr": "Bouton (bus-adresse)"
+          }
+        },
+        {
+          "key": "name",
+          "type": "string",
+          "label": {
+            "en": "Panel name",
+            "fr": "Nom du bouton"
+          }
+        },
+        {
+          "key": "button",
+          "type": "number",
+          "label": {
+            "en": "Key number",
+            "fr": "Numéro de touche"
+          }
+        },
+        {
+          "key": "event",
+          "type": "string",
+          "label": {
+            "en": "Event",
+            "fr": "Événement"
+          }
+        },
+        {
+          "key": "rotate",
+          "type": "number",
+          "label": {
+            "en": "Rotation (rotary knob)",
+            "fr": "Rotation (bouton rotatif)"
+          }
         }
       ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }

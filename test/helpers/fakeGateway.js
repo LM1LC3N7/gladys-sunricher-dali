@@ -16,6 +16,12 @@ export const TEST_CERT = {
   key: readFileSync(here('key.pem')),
   cert: readFileSync(here('cert.pem')),
 };
+/** A test root, and a gateway certificate it signed (stands for the Sunricher root). */
+export const TEST_CA = readFileSync(here('test-ca.pem'));
+export const SIGNED_CERT = {
+  key: readFileSync(here('signed-key.pem')),
+  cert: readFileSync(here('signed-cert.pem')),
+};
 export const OTHER_CERT = {
   key: readFileSync(here('key2.pem')),
   cert: readFileSync(here('cert2.pem')),
@@ -168,7 +174,7 @@ export class FakeGateway {
     username = 'dali-user',
     password = 'dali-pass',
     tls = false,
-    cert = TEST_CERT,
+    cert = SIGNED_CERT,
     installation = defaultInstallation(),
     connack, // forced CONNACK code, or 'close' / 'silent'
     answer = true,
@@ -274,8 +280,14 @@ export class FakeGateway {
 
   respond(json) {
     const gwSn = this.serial;
+    // By bus, address and type: several DALI devices may share an address.
     const find = (d) =>
-      this.installation.devices.find((x) => x.channel === d.channel && x.address === d.address);
+      this.installation.devices.find(
+        (x) =>
+          x.channel === d.channel &&
+          x.address === d.address &&
+          (d.devType ? x.devType === d.devType : x.devType.startsWith('01')),
+      );
     switch (json.cmd) {
       case 'getVersion':
         this.push({ cmd: 'getVersionRes', gwSn, data: { swVersion: '1.2.3', fwVersion: '4.5.6' } });

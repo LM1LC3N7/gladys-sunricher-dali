@@ -80,6 +80,16 @@ export const T = {
     fr: (presented, pinned) =>
       `Le certificat de la passerelle a changé (SHA-256 ${presented}, épinglé ${pinned}) : rien n'a été envoyé, aucun nouvel essai. Si vous avez remplacé ou réinitialisé la passerelle, saisissez la nouvelle empreinte dans la configuration.`,
   },
+  untrusted: {
+    en: (presented) =>
+      `The certificate of the gateway (SHA-256 ${presented}) is not signed by Sunricher: nothing sent, no new try. If you are sure this is your gateway, enter this fingerprint in the configuration.`,
+    fr: (presented) =>
+      `Le certificat de la passerelle (SHA-256 ${presented}) n'est pas signé par Sunricher : rien n'a été envoyé, aucun nouvel essai. Si vous êtes sûr que c'est votre passerelle, saisissez cette empreinte dans la configuration.`,
+  },
+  pinNotWritten: {
+    en: 'The certificate fingerprint could not be written to /data: nothing sent, no new try. Check the storage of Gladys, then click "Test the connection".',
+    fr: "L'empreinte du certificat n'a pas pu être écrite dans /data : rien n'a été envoyé, aucun nouvel essai. Vérifiez le stockage de Gladys, puis cliquez sur « Tester la connexion ».",
+  },
   unreachable: {
     en: (reason, seconds) => `DALI gateway unreachable (${reason}); next try in ${seconds} s.`,
     fr: (reason, seconds) =>

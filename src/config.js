@@ -43,6 +43,8 @@ export function normalizeSerial(raw) {
   const text = String(raw ?? '').trim();
   if (/^[0-9a-f]{2}([:-][0-9a-f]{2}){5}$/i.test(text))
     return text.replace(/[:-]/g, '').toUpperCase();
+  // The SR-GW-EDA form (12 hexadecimal digits) in capitals, however typed.
+  if (/^[0-9a-f]{12}$/i.test(text)) return text.toUpperCase();
   return /^[0-9A-Za-z]{4,40}$/.test(text) ? text : '';
 }
 

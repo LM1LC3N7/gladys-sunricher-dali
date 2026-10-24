@@ -9,7 +9,9 @@
 // Gladys integration sits behind a Docker bridge that multicast never
 // crosses. So this runs once, on the host network:
 //
-//   docker run --rm -it --network host ghcr.io/lm1lc3n7/gladys-sunricher-dali:<version> node scripts/pair.mjs
+//   docker run --rm -it --network host --log-driver none --read-only \
+//     --cap-drop ALL --security-opt no-new-privileges \
+//     ghcr.io/lm1lc3n7/gladys-sunricher-dali:<version> node scripts/pair.mjs
 //   (or `node scripts/pair.mjs` from a clone, with Node 22 or later)
 //
 // Options: --serial <serial number> (only that gateway), --timeout <seconds>
@@ -74,8 +76,9 @@ export function parseAnswer(buffer) {
   if (!data || typeof data !== 'object') return undefined;
   const serial = text(data.gwSn, 40);
   if (!/^[0-9A-Za-z]{4,40}$/.test(serial)) return undefined;
-  const port =
-    Number.isInteger(data.port) && data.port > 0 && data.port < 65536 ? data.port : undefined;
+  const rawPort =
+    typeof data.port === 'string' && /^\d{1,5}$/.test(data.port) ? Number(data.port) : data.port;
+  const port = Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536 ? rawPort : undefined;
   const username = data.username ? unscramble(data.username, PROTOCOL_KEY) : '';
   const password = data.passwd ? unscramble(data.passwd, PROTOCOL_KEY) : '';
   return {
@@ -156,7 +159,7 @@ async function main() {
   listener.on('message', (buffer) => {
     if (done) return;
     const answer = parseAnswer(buffer);
-    if (!answer || (serial && answer.serial !== serial)) return;
+    if (!answer || (serial && answer.serial.toUpperCase() !== serial.toUpperCase())) return;
     if (!answer.username || !answer.password) {
       if (!seen.has(answer.serial)) {
         seen.add(answer.serial);

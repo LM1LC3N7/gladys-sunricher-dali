@@ -49,6 +49,10 @@ Ported:
 - `device.py`, `group.py`, `scene.py`, `base.py`, in `src/app.js` and
   `src/dali/protocol.js`: the property format (`dpid`, `dataType`, `value`),
   power on with a brightness, the HSV text of a colour.
+- `certs/ca.crt`, copied unchanged as `src/certs/sunricher-root-ca.pem`
+  (Sunricher root certificate, "O=SR, CN=Root CA", valid until 2035), and
+  the way `_setup_ssl_sync` uses it (chain required, host name not checked),
+  in `src/mqtt/client.js`.
 - `udp_client.py`, `discovery.py`, in `scripts/pair.mjs`: the pairing request
   (AES-128-CTR under the protocol key and initial vector published there, a
   random key, `type: "HA"`), multicast 239.255.255.250 port 1900, answers on
@@ -57,9 +61,9 @@ Ported:
 Changed from PySrDaliGateway:
 
 - An MQTT 3.1.1 client of our own instead of paho-mqtt: one session, the
-  exact topic only, every packet bounded, the TLS certificate pinned
-  (SHA-256) and checked before the CONNECT that carries the password, instead
-  of the Sunricher root certificate without host name check.
+  exact topic only, every packet bounded; the TLS certificate checked against
+  the Sunricher root on the first contact, then pinned (SHA-256), always
+  before the CONNECT that carries the password.
 - Refused credentials stop the connection for good (no reconnection loop);
   reconnections spaced from 10 s to 5 min.
 - Every message validated strictly (strict integers in DALI ranges, the

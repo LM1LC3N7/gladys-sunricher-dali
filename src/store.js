@@ -5,9 +5,12 @@
 //   its certificate changed, with the place it belongs to: a restart never
 //   sends refused credentials again, nor the password to another certificate;
 // - the certificate fingerprint pinned for that place (public data);
+// - with a refusal of the credentials, 8 bits of a salted hash of the
+//   refused pair (never of an accepted one): new credentials typed while the
+//   container was stopped lift the stop;
 // - the time of the last connection attempt (a restart loop never connects
 //   faster than the spacing).
-// Never the user name, the password, nor anything derived from them.
+// Never the user name or the password, nor anything that could give them back.
 // -----------------------------------------------------------------------------
 
 import { readFile, rename, writeFile } from 'node:fs/promises';
@@ -57,7 +60,7 @@ export function memoryStore(initial = null) {
   };
 }
 
-export const STOP_KINDS = ['credentials_refused', 'certificate_changed'];
+export const STOP_KINDS = ['credentials_refused', 'certificate_changed', 'certificate_untrusted'];
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const place = (value) => typeof value === 'string' && value.length > 0 && value.length <= 400;
@@ -74,6 +77,12 @@ export function normalizeMemory(raw) {
             kind: stop.kind,
             at: Number.isFinite(stop.at) ? stop.at : 0,
             ...(HEX64.test(stop.presented ?? '') ? { presented: stop.presented } : {}),
+            ...(/^[0-9a-f]{16}$/.test(stop.mark?.salt ?? '') &&
+            Number.isInteger(stop.mark?.bits) &&
+            stop.mark.bits >= 0 &&
+            stop.mark.bits <= 255
+              ? { mark: { salt: stop.mark.salt, bits: stop.mark.bits } }
+              : {}),
           }
         : null,
     pin:

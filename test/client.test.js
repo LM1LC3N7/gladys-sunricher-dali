@@ -2,14 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 import { MqttSession } from '../src/mqtt/client.js';
-import { FakeGateway, OTHER_CERT, SERIAL, publishFrame } from './helpers/fakeGateway.js';
+import {
+  FakeGateway,
+  OTHER_CERT,
+  SERIAL,
+  TEST_CA,
+  TEST_CERT,
+  publishFrame,
+} from './helpers/fakeGateway.js';
+import { SUNRICHER_CA } from '../src/mqtt/client.js';
 import { silentLogger, sleep, until } from './helpers/wait.js';
 
 const TOPIC = `/${SERIAL}/client/reciver/`;
 
-function session(gateway, extra = {}) {
+function session(gateway, extra = {}, { ca = TEST_CA } = {}) {
   const logger = silentLogger();
-  const s = new MqttSession({ logger });
+  const s = new MqttSession({ logger, ca });
   s.configure({
     host: '127.0.0.1',
     port: gateway.port,
@@ -190,4 +198,121 @@ test('an oversized packet ends the session; a later packet of it is never taken'
   const [, down] = await until(() => events.find(([n]) => n === 'down'));
   assert.match(down.reason, /too large/);
   assert.ok(!events.some(([n]) => n === 'message'));
+});
+
+test('TLS first contact: a certificate not signed by the root gets nothing, no new try', async (t) => {
+  for (const [cert, ca] of [
+    [TEST_CERT, TEST_CA], // self-signed
+    [undefined, SUNRICHER_CA], // signed by another root than Sunricher's
+  ]) {
+    const gateway = await new FakeGateway({ tls: true, ...(cert ? { cert } : {}) }).listen();
+    const { s, events } = session(gateway, {}, { ca });
+    let learnt = 0;
+    s.learn = async () => {
+      learnt += 1;
+      return true;
+    };
+    t.after(async () => {
+      s.stop();
+      await gateway.close();
+    });
+    s.start();
+    const [, down] = await until(() => events.find(([n]) => n === 'down'));
+    assert.equal(down.untrusted, true);
+    assert.match(down.presented, /^[0-9a-f]{64}$/);
+    await sleep(50);
+    assert.equal(gateway.connects.length, 0);
+    assert.equal(learnt, 0);
+    assert.equal(s.running, false);
+  }
+});
+
+test('TLS: a typed (pinned) fingerprint is accepted even when Sunricher did not sign it', async (t) => {
+  const probe = await new FakeGateway({ tls: true, cert: TEST_CERT }).listen();
+  const first = session(probe, {}, { ca: TEST_CA });
+  first.s.start();
+  const [, down] = await until(() => first.events.find(([n]) => n === 'down'));
+  await probe.close();
+  const gateway = await new FakeGateway({ tls: true, cert: TEST_CERT }).listen();
+  const { s } = session(gateway, { fingerprint: down.presented }, { ca: TEST_CA });
+  t.after(async () => {
+    s.stop();
+    await gateway.close();
+  });
+  s.start();
+  await until(() => s.connected);
+  assert.equal(gateway.connects.length, 1);
+});
+
+test('a protocol error before CONNACK is an ordinary cut, never a refusal', async (t) => {
+  const sockets = [];
+  let connections = 0;
+  const server = createServer((socket) => {
+    connections += 1;
+    sockets.push(socket);
+    socket.on('error', () => undefined);
+    // A PUBLISH before the CONNACK.
+    socket.once('data', () => socket.write(publishFrame(TOPIC, '{}')));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const timers = {
+    setTimeout: (fn, ms) => setTimeout(fn, ms >= 10_000 ? 5 : ms),
+    clearTimeout,
+    setInterval,
+    clearInterval,
+  };
+  const s = new MqttSession({ timers });
+  s.configure({
+    host: '127.0.0.1',
+    port: server.address().port,
+    username: 'u',
+    password: 'p',
+    topic: TOPIC,
+    publishTopic: '/x/',
+  });
+  const downs = [];
+  s.on('down', (e) => downs.push(e));
+  t.after(async () => {
+    s.stop();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  s.start();
+  await until(() => downs.length >= 3);
+  assert.ok(downs.every((d) => !d.silent && !d.refused && d.retryIn > 0));
+  assert.ok(connections >= 3);
+});
+
+test('prepare() is awaited before the connection opens', async (t) => {
+  const gateway = await new FakeGateway().listen();
+  const { s } = session(gateway);
+  const seen = [];
+  s.prepare = async () => {
+    await sleep(40);
+    seen.push(gateway.connections);
+  };
+  t.after(async () => {
+    s.stop();
+    await gateway.close();
+  });
+  s.start();
+  assert.equal(s.busy, true, 'busy while preparing');
+  await until(() => s.connected);
+  assert.deepEqual(seen, [0]);
+});
+
+test('a full write buffer: nothing written, the session cut', () => {
+  const s = new MqttSession();
+  const writes = [];
+  s.socket = {
+    writableLength: 10 * 1024 * 1024,
+    write: (b) => writes.push(b),
+    removeAllListeners() {},
+    on() {},
+    destroy() {},
+  };
+  s.ready = true;
+  s.running = false;
+  assert.equal(s.publish('{}'), false);
+  assert.equal(writes.length, 0);
 });

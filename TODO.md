@@ -52,8 +52,10 @@ up to date at the end of every milestone.
 - What the gateway does with a second MQTT client (DALI Center app, Home
   Assistant) at the same time.
 - TLS gateways (`isMqttTls`): the port, whether the certificate is per gateway
-  (pinned here) and signed by the Sunricher root of PySrDaliGateway
-  (`certs/ca.crt`, not used: the pin is stricter).
+  (pinned here) and really signed by the Sunricher root of PySrDaliGateway
+  (checked on the first contact here).
+- Whether the gateway needs `type: "HA"` in the pairing request (field left
+  out, another value): the reference knows no other value.
 
 ## Decisions
 
@@ -78,9 +80,23 @@ up to date at the end of every milestone.
   (`tcp|tls://host:port/serial`), no automatic retry. Lifted by a change of
   host, port, serial, user name, password, TLS or fingerprint, or by "Test
   the connection" once a session works (the button alone never clears it).
-- **TLS**: optional (Home Assistant uses plain MQTT). The leaf certificate is
-  pinned (SHA-256): typed in the configuration, or learnt on the first
-  contact and written to `/data` before CONNECT (a failed write stops). A
+  With the stop, 8 bits of a salted SHA-256 of the refused pair (lesson 7:
+  never of an accepted one; 256 of 65,536 candidates share it, test
+  `credentials mark`): other credentials found at start (typed while the
+  container was stopped) lift it. Only a close or the 15 s timeout between
+  CONNECT and CONNACK counts as a silent refusal; a protocol error (a packet
+  out of place, a malformed one) is an ordinary cut with a spaced retry.
+- **TLS**: optional (Home Assistant uses plain MQTT). On the first contact
+  (no pin), the chain must verify against the Sunricher root of
+  PySrDaliGateway (`src/certs/sunricher-root-ca.pem`, Apache-2.0, see the
+  notices), the host name not checked (as the reference); otherwise a stop
+  persisted as `certificate_untrusted` with the presented fingerprint, lifted
+  by typing that fingerprint. The leaf certificate is then pinned (SHA-256):
+  typed in the configuration (accepted signed by Sunricher or not), or learnt
+  on the first contact and written to `/data` before CONNECT: the pin enters
+  the memory only once the write succeeded; a failed write stops with its own
+  status ("could not be written to /data: nothing sent"), not persisted, and
+  no CONNECT is ever sent without a written pin. A
   typed fingerprint is kept in `/data` too; emptying the field never relearns.
   The pin is keyed by the serial number (an IP change keeps it). A changed
   certificate stops, persisted, with the presented fingerprint in the status.
@@ -98,6 +114,12 @@ up to date at the end of every milestone.
   logged, written to `/data` or put in a status. The user name is a plain
   field (not secret) of the configuration, the password a secret field
   without default.
+- **Model key by nature**: the model keys a device by
+  `light|motion|illuminance|panel:<bus>-<address>`: a DALI-2 multi-sensor
+  gives a motion and an illuminance instance at one address, and input
+  devices have their own short addresses beside the lights'. Two instances
+  of the same nature at one address: the first of the list is kept, the
+  other logged.
 - **External ids** (frozen): `light|motion|illuminance:<serial>-<bus>-<address>`,
   `group:<serial>-<bus>-<group>`, `scene:<serial>-<bus>-<scene>`, serial in
   lower case. PySrDaliGateway also puts the DALI type in its id; not here, so
@@ -133,8 +155,10 @@ up to date at the end of every milestone.
 - **Messages**: validated strictly (strict integers, DALI ranges, a known
   command, `gwSn` equal to the configured serial when present, bounded lists
   and names, control characters removed); 1,000 messages per 10 s at most.
-- **Restart spacing**: the time of the last attempt is in `/data` (written at
-  most once a minute, and at the first attempt of a process); a start waits
-  until 10 s after it.
+- **Restart spacing**: the time of the last attempt is in `/data`, written
+  BEFORE the connection opens (the session awaits it) at the first attempt of
+  a process, then at most once a minute; a start waits until 10 s after it.
+- **Write buffer**: checked before each write: a command refused "nothing
+  sent" never reached the socket.
 - **Status and Discovery at every `connected`**: the status cache, the
   published devices and transports are forgotten and sent again.

@@ -82,8 +82,8 @@
         "fr": "Numéro de série de la passerelle"
       },
       "description": {
-        "en": "As the pairing shows it (on the SR-GW-EDA, its MAC address in capitals without separators). The integration only takes the messages of this gateway.",
-        "fr": "Tel que l'appairage l'affiche (sur la SR-GW-EDA, son adresse MAC en majuscules sans séparateurs). L'intégration ne prend que les messages de cette passerelle."
+        "en": "As the pairing shows it (on the SR-GW-EDA, its MAC address without separators; 12 hexadecimal digits are put in capitals). The integration only takes the messages of this gateway.",
+        "fr": "Tel que l'appairage l'affiche (sur la SR-GW-EDA, son adresse MAC sans séparateurs ; 12 chiffres hexadécimaux sont mis en majuscules). L'intégration ne prend que les messages de cette passerelle."
       },
       "placeholder": {
         "en": "A1B2C3D4E5F6",
@@ -108,8 +108,8 @@
         "fr": "Mot de passe (de l'appairage)"
       },
       "description": {
-        "en": "Kept by Gladys in its database, never shown again, sent only to the gateway, never written in the logs. With TLS, sent only once the certificate of the gateway is checked.",
-        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la passerelle, jamais écrit dans les journaux. En TLS, envoyé seulement une fois le certificat de la passerelle vérifié."
+        "en": "Kept by Gladys in its database, never shown again, sent only to the gateway, never written in the logs. With TLS, sent only once the certificate of the gateway is checked (signed by Sunricher on the first connection, then the pinned one).",
+        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la passerelle, jamais écrit dans les journaux. En TLS, envoyé seulement une fois le certificat de la passerelle vérifié (signé par Sunricher à la première connexion, puis celui épinglé)."
       },
       "required": true
     },
@@ -121,8 +121,8 @@
         "fr": "TLS (si l'appairage indique que la passerelle l'utilise)"
       },
       "description": {
-        "en": "Without TLS, the user name and the password travel in clear on your network (plain MQTT, as the gateway works by default). With TLS, the certificate of the gateway is pinned on the first connection.",
-        "fr": "Sans TLS, le nom d'utilisateur et le mot de passe circulent en clair sur votre réseau (MQTT simple, comme la passerelle fonctionne par défaut). Avec TLS, le certificat de la passerelle est épinglé à la première connexion."
+        "en": "Without TLS, the user name and the password travel in clear on your network (plain MQTT, as the gateway works by default). With TLS, the certificate of the gateway must be signed by Sunricher on the first connection, then it is pinned.",
+        "fr": "Sans TLS, le nom d'utilisateur et le mot de passe circulent en clair sur votre réseau (MQTT simple, comme la passerelle fonctionne par défaut). Avec TLS, le certificat de la passerelle doit être signé par Sunricher à la première connexion, puis il est épinglé."
       },
       "required": false,
       "default": false
@@ -135,8 +135,8 @@
         "fr": "Empreinte du certificat (TLS seulement)"
       },
       "description": {
-        "en": "Optional: the SHA-256 fingerprint of the gateway certificate. Empty, the first certificate seen is kept. If the certificate changes later, nothing is sent and the status shows the new fingerprint: enter it here only if you replaced or reset the gateway.",
-        "fr": "Facultatif : l'empreinte SHA-256 du certificat de la passerelle. Vide, le premier certificat vu est gardé. Si le certificat change ensuite, rien n'est envoyé et l'état affiche la nouvelle empreinte : saisissez-la ici seulement si vous avez remplacé ou réinitialisé la passerelle."
+        "en": "Optional: the SHA-256 fingerprint of the gateway certificate. Empty, the first certificate seen is kept if Sunricher signed it; enter a fingerprint to accept a certificate Sunricher did not sign. If the certificate changes later, nothing is sent and the status shows the new fingerprint: enter it here only if you replaced or reset the gateway.",
+        "fr": "Facultatif : l'empreinte SHA-256 du certificat de la passerelle. Vide, le premier certificat vu est gardé s'il est signé par Sunricher ; saisissez une empreinte pour accepter un certificat que Sunricher n'a pas signé. Si le certificat change ensuite, rien n'est envoyé et l'état affiche la nouvelle empreinte : saisissez-la ici seulement si vous avez remplacé ou réinitialisé la passerelle."
       },
       "placeholder": {
         "en": "ab:cd:...",

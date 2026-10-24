@@ -6,10 +6,11 @@
 // - One socket at a time; a generation number is bumped at every end, and
 //   every listener and timer of an older socket checks it, so a late packet of
 //   an old session is never taken.
-// - TLS (when the gateway uses it): the certificate is checked against the
-//   pinned fingerprint as soon as the handshake ends, BEFORE the CONNECT packet
-//   that carries the password is written. A different certificate ends the
-//   session with no new try.
+// - TLS (when the gateway uses it): as soon as the handshake ends, BEFORE
+//   the CONNECT packet that carries the password is written, the certificate
+//   is checked against the pinned fingerprint, or, on the first contact,
+//   against the Sunricher root (then kept by the app). A different or
+//   unsigned certificate ends the session with no new try.
 // - A CONNACK 4 or 5 (bad user name or password, not authorized) is final, as
 //   are two sessions in a row closed (or left unanswered) after CONNECT: never
 //   a loop with a refused password.
@@ -17,12 +18,13 @@
 //   30 s, a missing PINGRESP cuts the session.
 // - Only the PUBLISH packets of the subscribed topic, exactly, are passed on.
 //
-// Events: 'attempt', 'up' { fingerprint },
+// Events: 'up' { fingerprint },
 // 'message' { topic, payload }, 'down' { reason, retryIn, refused, silent,
 // certificate, presented, wasUp }. The password is never logged.
 // -----------------------------------------------------------------------------
 
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { createConnection, isIP } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
@@ -49,15 +51,27 @@ export const fingerprintOf = (certificate) =>
 
 export const colons = (hex) => (hex ? hex.match(/../g).join(':') : '?');
 
-function defaultConnect({ host, port, tls }) {
+/**
+ * The Sunricher root certificate shipped with PySrDaliGateway (certs/ca.crt,
+ * Apache-2.0, see THIRD_PARTY_NOTICES.md): on the first contact, the
+ * certificate of the gateway must be signed by it, as PySrDaliGateway checks.
+ */
+export const SUNRICHER_CA = readFileSync(
+  new URL('../certs/sunricher-root-ca.pem', import.meta.url),
+);
+
+function defaultConnect({ host, port, tls, ca }) {
   if (!tls) return createConnection({ host, port });
-  // The certificate of the gateway is checked against the pin once the
-  // handshake ends (session()), never against a public CA: the gateway has
-  // no public name.
+  // Never refused by Node itself: session() decides once the handshake ends,
+  // before any byte of ours. The chain is checked against the Sunricher root
+  // (socket.authorized); the name is not (the gateway has no public name, as
+  // PySrDaliGateway: check_hostname False).
   return tlsConnect({
     host,
     port,
+    ca,
     rejectUnauthorized: false,
+    checkServerIdentity: () => undefined,
     ...(isIP(host) ? {} : { servername: host }),
   });
 }
@@ -65,12 +79,14 @@ function defaultConnect({ host, port, tls }) {
 export class MqttSession extends EventEmitter {
   constructor({
     connect = defaultConnect,
+    ca = SUNRICHER_CA,
     timers = globalThis,
     now = Date.now,
     logger = silent,
   } = {}) {
     super();
     this.connectFn = connect;
+    this.ca = ca;
     this.timers = timers;
     this.now = now;
     this.logger = logger;
@@ -97,6 +113,9 @@ export class MqttSession extends EventEmitter {
     this.packetId = 0;
     /** (fingerprint) -> true once kept: set by the app (first contact over TLS). */
     this.learn = async () => true;
+    /** Awaited before each connection is opened (the app writes the time of the attempt). */
+    this.prepare = async () => undefined;
+    this.launching = false;
   }
 
   /** `topic`: the one subscribed to; `publishTopic`: where commands go. */
@@ -119,7 +138,7 @@ export class MqttSession extends EventEmitter {
 
   /** A socket is open (connecting or up). */
   get busy() {
-    return Boolean(this.socket);
+    return Boolean(this.socket) || this.launching;
   }
 
   /** Starts the session, after `delay` ms (a restart never connects faster than the spacing). */
@@ -131,15 +150,30 @@ export class MqttSession extends EventEmitter {
     if (delay > 0) {
       this.reconnectTimer = this.timers.setTimeout(() => {
         this.reconnectTimer = undefined;
-        if (this.running) this.open();
+        if (this.running) this.launch();
       }, delay);
       return;
     }
-    this.open();
+    this.launch();
+  }
+
+  /** Opens a connection once prepare() is done (its write in /data comes first). */
+  launch() {
+    const generation = this.generation;
+    this.launching = true;
+    Promise.resolve()
+      .then(() => this.prepare())
+      .catch(() => undefined)
+      .then(() => {
+        if (generation !== this.generation) return;
+        this.launching = false;
+        if (this.running && !this.socket) this.open();
+      });
   }
 
   stop() {
     this.running = false;
+    this.launching = false;
     this.generation += 1;
     if (this.reconnectTimer) {
       this.timers.clearTimeout(this.reconnectTimer);
@@ -189,6 +223,7 @@ export class MqttSession extends EventEmitter {
     this.generation += 1;
     const generation = this.generation;
     const { host, port, tls } = this.options;
+    const ca = this.ca;
     this.connectSent = false;
     this.connackSeen = false;
     this.presented = '';
@@ -197,13 +232,12 @@ export class MqttSession extends EventEmitter {
       onPacket: (packet) => {
         if (generation === this.generation) this.packet(generation, packet);
       },
-      onError: (err) => this.lost(generation, err.message),
+      onError: (err) => this.lost(generation, err.message, { protocol: true }),
     });
-    this.emit('attempt');
     this.logger.debug(`Connecting to the DALI gateway at ${host}:${port} (${tls ? 'TLS' : 'TCP'})`);
     let socket;
     try {
-      socket = this.connectFn({ host, port, tls });
+      socket = this.connectFn({ host, port, tls, ca });
     } catch (err) {
       this.lost(generation, `connection failed: ${err.message}`);
       return;
@@ -244,21 +278,34 @@ export class MqttSession extends EventEmitter {
         return;
       }
       if (!fingerprint) {
-        // First contact: the app keeps the fingerprint in /data, and only once
-        // it is written does the password leave.
+        // First contact: the certificate must be signed by the Sunricher root.
+        if (socket.authorized !== true) {
+          this.logger.error(
+            `DALI gateway: its certificate (SHA-256 ${colons(seen)}) is not signed by the Sunricher root (${socket.authorizationError?.code ?? socket.authorizationError ?? 'unknown'}): connection stopped, nothing sent`,
+          );
+          this.lost(generation, 'certificate not signed by Sunricher', { untrusted: true });
+          return;
+        }
+        // Then the app keeps the fingerprint in /data, and only once it is
+        // written does the password leave.
         Promise.resolve()
           .then(() => this.learn(seen))
           .then(
             (kept) => {
               if (generation !== this.generation) return;
-              if (kept === false) {
-                this.lost(generation, 'the certificate could not be kept', { certificate: true });
+              if (kept !== true) {
+                this.lost(generation, 'the fingerprint could not be written to /data', {
+                  unkept: true,
+                });
                 return;
               }
               this.options.fingerprint = seen;
               this.sendConnect(generation);
             },
-            (err) => this.lost(generation, `the certificate could not be kept: ${err.message}`),
+            () =>
+              this.lost(generation, 'the fingerprint could not be written to /data', {
+                unkept: true,
+              }),
           );
         return;
       }
@@ -286,15 +333,16 @@ export class MqttSession extends EventEmitter {
   write(generation, bytes) {
     const socket = this.socket;
     if (!socket || generation !== this.generation) return false;
+    // Checked BEFORE the write: false always means nothing was handed to the socket.
+    if ((socket.writableLength ?? 0) > LIMITS.maxPendingWrite) {
+      this.logger.warn('DALI gateway: too much data waiting to be written, session cut');
+      this.lost(generation, 'write buffer full');
+      return false;
+    }
     try {
       socket.write(bytes);
     } catch (err) {
       this.lost(generation, err.message);
-      return false;
-    }
-    if ((socket.writableLength ?? 0) > LIMITS.maxPendingWrite) {
-      this.logger.warn('DALI gateway: too much data waiting to be written, session cut');
-      this.lost(generation, 'write buffer full');
       return false;
     }
     return true;
@@ -303,7 +351,7 @@ export class MqttSession extends EventEmitter {
   packet(generation, packet) {
     if (packet.type === TYPE.CONNACK) {
       if (this.connackSeen || !this.connectSent) {
-        this.lost(generation, 'unexpected CONNACK');
+        this.lost(generation, 'unexpected CONNACK', { protocol: true });
         return;
       }
       this.connackSeen = true;
@@ -327,7 +375,7 @@ export class MqttSession extends EventEmitter {
       return;
     }
     if (!this.connackSeen) {
-      this.lost(generation, 'packet before CONNACK');
+      this.lost(generation, 'packet before CONNACK', { protocol: true });
       return;
     }
     if (packet.type === TYPE.SUBACK) {
@@ -380,13 +428,24 @@ export class MqttSession extends EventEmitter {
   }
 
   /** The session ended: reconnect later, unless stopped or refused. */
-  lost(generation, reason, { certificate = false, refused = false } = {}) {
+  lost(
+    generation,
+    reason,
+    {
+      certificate = false,
+      untrusted = false,
+      unkept = false,
+      refused = false,
+      protocol = false,
+    } = {},
+  ) {
     if (generation !== this.generation) return;
     this.generation += 1;
     const wasUp = this.ready;
-    // CONNECT written, then the socket closed or nothing came back: likely a
-    // refused password on a broker that closes instead of answering.
-    const silentDrop = this.connectSent && !this.connackSeen && !refused;
+    // CONNECT written, then the socket closed or nothing came back in time:
+    // likely a refused password on a broker that closes instead of answering.
+    // A protocol error (a packet out of place, a malformed one) is not that.
+    const silentDrop = this.connectSent && !this.connackSeen && !refused && !protocol;
     const presented = this.presented;
     this.close();
     if (!this.running) return;
@@ -399,7 +458,7 @@ export class MqttSession extends EventEmitter {
       }
     }
     let retryIn;
-    if (refused || silent || certificate) {
+    if (refused || silent || certificate || untrusted || unkept) {
       // Never again by itself: a refused password is not tried in a loop, a
       // password is never sent to a gateway that is not the pinned one.
       this.running = false;
@@ -408,7 +467,7 @@ export class MqttSession extends EventEmitter {
       retryIn = TIMINGS.backoff[Math.min(this.failures - 1, TIMINGS.backoff.length - 1)];
       this.reconnectTimer = this.timers.setTimeout(() => {
         this.reconnectTimer = undefined;
-        if (this.running) this.open();
+        if (this.running) this.launch();
       }, retryIn);
     }
     this.emit('down', {
@@ -417,6 +476,8 @@ export class MqttSession extends EventEmitter {
       refused,
       silent,
       certificate,
+      untrusted,
+      unkept,
       wasUp,
       presented,
       pinned: this.options.fingerprint,

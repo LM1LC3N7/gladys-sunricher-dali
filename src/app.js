@@ -17,6 +17,7 @@
 // - The user name and password are never logged.
 // -----------------------------------------------------------------------------
 
+import { createHash, randomBytes } from 'node:crypto';
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig, placeKey, sessionKey } from './config.js';
 import { LIMITS, SCENE_TRIGGERS, TIMINGS } from './constants.js';
@@ -53,6 +54,15 @@ import { MqttSession, colons } from './mqtt/client.js';
 import { StatePublisher } from './publisher.js';
 import { fileStore, normalizeMemory } from './store.js';
 
+/**
+ * 8 bits of a salted hash of a user name and password: tells whether the
+ * credentials differ from refused ones, never enough to find them (256
+ * candidates out of 65,536 share it).
+ */
+export function credentialsMark(salt, { username, password }) {
+  return createHash('sha256').update(`${salt}\u0000${username}\u0000${password}`).digest()[0];
+}
+
 /** A command refused before anything was sent to the gateway. */
 export class Refused extends Error {}
 
@@ -79,6 +89,7 @@ export class DaliApp {
     logger = createLogger({ name: 'sunricher-dali' }),
     session,
     connect,
+    ca,
     now = Date.now,
     timers = globalThis,
     store = fileStore(),
@@ -88,8 +99,10 @@ export class DaliApp {
     this.now = now;
     this.timers = timers;
     this.store = store;
-    this.session = session ?? new MqttSession({ connect, timers, now, logger });
+    this.session =
+      session ?? new MqttSession({ connect, timers, now, logger, ...(ca ? { ca } : {}) });
     this.session.learn = (fingerprint) => this.learnCertificate(fingerprint);
+    this.session.prepare = () => this.noteAttempt();
     this.publisher = new StatePublisher({ gladys, logger, now, timers });
     this.config = normalizeConfig();
     this.key = undefined;
@@ -114,7 +127,6 @@ export class DaliApp {
     this.answered = false;
     this.window = { at: 0, count: 0, dropped: 0, loggedAt: undefined };
     this.attemptWrittenAt = -Infinity;
-    this.session.on('attempt', () => this.noteAttempt());
     this.session.on('up', (info) => {
       this.online = true;
       // What a session knows starts unknown at every session.
@@ -176,14 +188,30 @@ export class DaliApp {
     }
   }
 
-  /** The time of the attempt, in /data at most once a minute (before the attempt goes on). */
-  noteAttempt() {
+  /**
+   * The time of the attempt, written to /data BEFORE the connection opens
+   * (the session awaits this): at the first attempt of the process, then at
+   * most once a minute.
+   */
+  async noteAttempt() {
     const now = this.now();
-    if (!this.memory) return;
-    this.memory.lastAttemptAt = now;
+    const memory = await this.loadMemory();
+    memory.lastAttemptAt = now;
     if (now - this.attemptWrittenAt < TIMINGS.attemptWrite) return;
     this.attemptWrittenAt = now;
-    this.saveMemory();
+    await this.saveMemory();
+  }
+
+  /** Writes `next` to /data; only once written does it become the memory. */
+  async commitMemory(next) {
+    try {
+      await this.store.save(next);
+    } catch (err) {
+      this.logger.warn(`Saving the state to /data failed: ${err.message}`);
+      return false;
+    }
+    this.memory = next;
+    return true;
   }
 
   /** The pin of this gateway: typed in the configuration, else kept in /data. */
@@ -196,8 +224,15 @@ export class DaliApp {
   /** First contact over TLS: the fingerprint is kept in /data before the password leaves. */
   async learnCertificate(fingerprint) {
     const memory = await this.loadMemory();
-    memory.pin = { place: this.config.serial, fingerprint };
-    if (!(await this.saveMemory())) return false;
+    // Never in memory before it is in /data: a pin not written is no pin.
+    if (
+      !(await this.commitMemory({ ...memory, pin: { place: this.config.serial, fingerprint } }))
+    ) {
+      this.logger.error(
+        'DALI gateway: the certificate fingerprint could not be written to /data: nothing sent',
+      );
+      return false;
+    }
     this.logger.info(
       `DALI gateway: certificate pinned on first contact, SHA-256 ${colons(fingerprint)}`,
     );
@@ -226,8 +261,10 @@ export class DaliApp {
       // A typed fingerprint is kept too: emptying the field never relearns blindly.
       const pin = memory.pin;
       if (!pin || pin.place !== next.serial || pin.fingerprint !== next.fingerprint) {
-        memory.pin = { place: next.serial, fingerprint: next.fingerprint };
-        await this.saveMemory();
+        await this.commitMemory({
+          ...memory,
+          pin: { place: next.serial, fingerprint: next.fingerprint },
+        });
       }
     }
     await this.publishDevices();
@@ -237,11 +274,22 @@ export class DaliApp {
       await this.setStatus(false, problem);
       return;
     }
-    if (memory.stop && memory.stop.place === placeKey(next)) {
+    if (
+      memory.stop?.kind === 'credentials_refused' &&
+      memory.stop.mark &&
+      credentialsMark(memory.stop.mark.salt, next) !== memory.stop.mark.bits
+    ) {
+      // Other credentials than the refused ones (typed while the container
+      // was stopped): the stop is lifted.
+      this.logger.info('DALI gateway: new credentials since the refusal, connecting again');
+      await this.liftStop();
+    }
+    if (this.memory.stop && this.memory.stop.place === placeKey(next)) {
+      const { stop } = this.memory;
       this.logger.warn(
-        `DALI gateway: stopped before (${memory.stop.kind}): no connection until the configuration changes or "Test the connection" is clicked`,
+        `DALI gateway: stopped before (${stop.kind}): no connection until the configuration changes or "Test the connection" is clicked`,
       );
-      await this.setStatus(false, this.stopMessage(memory.stop.kind, memory.stop.presented));
+      await this.setStatus(false, this.stopMessage(stop.kind, stop.presented));
       return;
     }
     await this.setStatus(false, T.connecting);
@@ -250,6 +298,7 @@ export class DaliApp {
   }
 
   stopMessage(kind, presented, pinned) {
+    if (kind === 'certificate_untrusted') return fill(T.untrusted, colons(presented));
     if (kind === 'certificate_changed') {
       return fill(T.certificate, colons(presented), colons(pinned ?? this.pinned()));
     }
@@ -409,18 +458,35 @@ export class DaliApp {
     this.refresh({ force: true });
   }
 
-  async onDown({ reason, retryIn, refused, silent, certificate, presented, pinned }, wasOnline) {
+  async onDown(
+    { reason, retryIn, refused, silent, certificate, untrusted, unkept, presented, pinned },
+    wasOnline,
+  ) {
     const seconds = Math.round((retryIn ?? 0) / 1000);
-    if (refused || silent || certificate) {
-      const kind = certificate ? 'certificate_changed' : 'credentials_refused';
+    if (unkept) {
+      // /data refused the pin: nothing sent, no new try by itself; nothing to persist either.
+      this.logger.error(`DALI gateway: connection stopped (${reason}), no new try`);
+      await this.setStatus(false, T.pinNotWritten);
+    } else if (refused || silent || certificate || untrusted) {
+      const kind = untrusted
+        ? 'certificate_untrusted'
+        : certificate
+          ? 'certificate_changed'
+          : 'credentials_refused';
       this.logger.error(`DALI gateway: connection stopped (${reason}), no new try`);
       const memory = await this.loadMemory();
+      const salt = randomBytes(8).toString('hex');
       memory.stop = {
         place: placeKey(this.config),
         kind,
         at: this.now(),
         // Public data: kept so the status still shows it after a restart.
-        ...(certificate && presented ? { presented } : {}),
+        ...((certificate || untrusted) && presented ? { presented } : {}),
+        // 8 bits of a salted hash of the refused credentials (never of
+        // accepted ones): enough to see they changed, useless to find them.
+        ...(kind === 'credentials_refused'
+          ? { mark: { salt, bits: credentialsMark(salt, this.config) } }
+          : {}),
       };
       await this.saveMemory();
       await this.setStatus(false, this.stopMessage(kind, presented, pinned));
@@ -622,7 +688,17 @@ export class DaliApp {
         (e) => {
           if (e.kind !== 'search') return undefined;
           for (const device of e.devices) {
-            if (found.size < LIMITS.maxDevices) found.set(deviceKey(device), device);
+            const key = deviceKey(device);
+            if (found.has(key)) {
+              // Two instances of the same nature at one address: the first is kept.
+              if (found.get(key).devType !== device.devType) {
+                this.logger.warn(
+                  `DALI gateway: a second ${key.split(':')[0]} at ${device.channel}-${device.address} (type ${device.devType}) is ignored`,
+                );
+              }
+              continue;
+            }
+            if (found.size < LIMITS.maxDevices) found.set(key, device);
           }
           return e.done ? true : undefined;
         },
@@ -912,7 +988,7 @@ export class DaliApp {
       this.scheduleReadBack(group.members ?? this.lightsOf(channel));
       return;
     }
-    const device = this.model.devices.get(shown);
+    const device = this.model.devices.get(`light:${shown}`);
     if (!device || !isLight(device.devType) || !lightFeatureKeys(device.devType).includes(key)) {
       throw this.refused(T.unknownDevice);
     }
@@ -923,7 +999,7 @@ export class DaliApp {
       address: device.address,
       property: properties,
     });
-    this.scheduleReadBack([shown]);
+    this.scheduleReadBack([`light:${shown}`]);
   }
 
   checkDeadline(asked) {

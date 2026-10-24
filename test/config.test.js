@@ -22,6 +22,8 @@ test('host: an address or a name only', () => {
 test('serial number: a MAC is joined in capitals; no topic character passes', () => {
   assert.equal(normalizeSerial('a1:b2:c3:d4:e5:f6'), 'A1B2C3D4E5F6');
   assert.equal(normalizeSerial('A1B2C3D4E5F6'), 'A1B2C3D4E5F6');
+  assert.equal(normalizeSerial('a1b2c3d4e5f6'), 'A1B2C3D4E5F6');
+  assert.equal(normalizeSerial('GwSerial01'), 'GwSerial01', 'another form is kept as typed');
   for (const bad of ['A1/B2', 'A1+B2C3', '#', 'abc', 'A1B2\nC3', '']) {
     assert.equal(normalizeSerial(bad), '', JSON.stringify(bad));
   }

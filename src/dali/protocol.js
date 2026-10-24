@@ -85,7 +85,23 @@ export function deviceRef(raw) {
   return { devType: type, channel, address };
 }
 
-export const deviceKey = ({ channel, address }) => `${channel}-${address}`;
+/**
+ * The nature of a DALI device: a DALI-2 input device (sensor, panel) has its
+ * own short addresses, and a multi-sensor gives several instances (motion,
+ * illuminance) at one address: the key of the model carries the nature
+ * (PySrDaliGateway puts the type in its keys too).
+ */
+export function natureOf(type) {
+  if (isLight(type)) return 'light';
+  if (isMotion(type)) return 'motion';
+  if (isIlluminance(type)) return 'illuminance';
+  if (isPanel(type)) return 'panel';
+  return `type${type}`;
+}
+
+/** The key of a device in the model: `light:0-5`, `motion:0-5`… */
+export const deviceKey = ({ devType: type, channel, address }) =>
+  `${natureOf(type)}:${channel}-${address}`;
 
 // --- Outgoing ------------------------------------------------------------------
 

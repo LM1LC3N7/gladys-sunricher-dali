@@ -43,11 +43,18 @@ voit pas la multidiffusion du réseau (pont Docker) : l'appairage se fait donc
 ordinateur du même réseau avec Node.js 22 ou plus) :
 
 ```bash
-docker run --rm -it --network host ghcr.io/lm1lc3n7/gladys-sunricher-dali:<version> node scripts/pair.mjs
+docker run --rm -it --network host --log-driver none --read-only \
+  --cap-drop ALL --security-opt no-new-privileges \
+  ghcr.io/lm1lc3n7/gladys-sunricher-dali:<version> node scripts/pair.mjs
 ```
 
 (remplacez `<version>` par la version installée, affichée dans Gladys ; depuis
 une copie du dépôt : `node scripts/pair.mjs`).
+
+`--network host` sert seulement à recevoir la multidiffusion du réseau ; le
+conteneur est supprimé à la fin (`--rm`). `--log-driver none` empêche Docker de
+garder la sortie (donc le mot de passe) dans ses journaux ; les autres options
+retirent au conteneur tout droit dont il n'a pas besoin.
 
 1. Lancez la commande : elle cherche les passerelles pendant 3 minutes.
 2. Appuyez **une fois, brièvement**, sur le bouton **Reset** de la passerelle.
@@ -55,25 +62,32 @@ une copie du dépôt : `node scripts/pair.mjs`).
    le **nom d'utilisateur**, le **mot de passe** et si la passerelle utilise
    **TLS**.
 4. Recopiez ces valeurs dans la configuration de l'intégration, puis effacez
-   le terminal : le mot de passe n'est affiché que là (jamais écrit dans un
-   fichier ni dans un journal).
+   le terminal : le mot de passe n'est affiché que là (la commande ne l'écrit
+   dans aucun fichier ; avec `--log-driver none`, Docker ne le garde pas non
+   plus).
 
 Options : `--serial <numéro>` (seulement cette passerelle), `--timeout
 <secondes>`. Si plusieurs passerelles répondent, la première avec des
 identifiants est affichée : relancez avec `--serial` pour les autres.
 
+Si la passerelle répond en multidiffusion, sa réponse (et donc ses
+identifiants, simplement brouillés) est lisible par tout appareil du réseau
+pendant l'appairage : c'est inhérent au protocole de la passerelle.
+
 La demande et la réponse sont brouillées avec une clé fixe publiée dans
 PySrDaliGateway : c'est une convention du protocole de la passerelle, pas une
-protection. Le champ `type: "HA"` de la demande est celui de la bibliothèque du
-fabricant pour les box domotiques tierces.
+protection. Le champ `type: "HA"` de la demande est celui de la bibliothèque
+publiée par Sunricher pour Home Assistant ; aucune autre valeur n'est
+documentée.
 
 ## 2. Configuration
 
 - **Adresse de la passerelle** : son adresse IP (donnez-lui une adresse fixe
   dans votre box).
 - **Port MQTT** : celui affiché par l'appairage (1883 par défaut).
-- **Numéro de série** : tel qu'affiché (sur la SR-GW-EDA, l'adresse MAC en
-  majuscules sans séparateurs ; `A1:B2:…` est accepté). Il fait partie des
+- **Numéro de série** : tel qu'affiché (sur la SR-GW-EDA, l'adresse MAC sans
+  séparateurs ; `A1:B2:…` est accepté, et 12 chiffres hexadécimaux sont mis en
+  majuscules ; un autre format est gardé tel quel, majuscules comprises). Il fait partie des
   sujets MQTT : l'intégration ne prend que les messages de **ce** numéro de
   série, et ignore un message qui annonce un autre numéro.
 - **Nom d'utilisateur** et **mot de passe** : ceux de l'appairage. Le mot de
@@ -81,8 +95,10 @@ fabricant pour les box domotiques tierces.
   la passerelle, jamais écrit dans les journaux.
 - **TLS** : seulement si l'appairage indique `TLS: yes`.
 - **Empreinte du certificat** (TLS seulement, facultatif) : vide, le premier
-  certificat vu est épinglé et gardé dans `/data` **avant** l'envoi du mot de
-  passe.
+  certificat vu doit être signé par l'autorité racine de Sunricher (celle de
+  PySrDaliGateway, embarquée dans l'intégration) ; il est alors épinglé et
+  gardé dans `/data` **avant** l'envoi du mot de passe. Saisie, c'est elle qui
+  est attendue, signée par Sunricher ou non.
 - **Langue des noms** : pour les appareils sans nom dans la passerelle.
 
 Le bouton **Tester la connexion** tente une connexion (si aucune n'est en
@@ -92,16 +108,27 @@ cours) et affiche ce qui a été lu.
 
 - **Sans TLS** (fonctionnement par défaut de la passerelle), le nom
   d'utilisateur et le mot de passe circulent **en clair** sur votre réseau
-  local : l'état de l'intégration le rappelle. Avec TLS, le certificat est
+  local : l'état de l'intégration le rappelle. Avec TLS, un premier certificat
+  qui n'est pas signé par Sunricher est refusé : **rien n'est envoyé**, arrêt
+  sans nouvel essai, l'état affiche son empreinte (à saisir seulement si vous
+  êtes sûr que c'est votre passerelle). Si `/data` ne peut pas garder
+  l'empreinte, rien n'est envoyé non plus. Ensuite le certificat est
   épinglé ; s'il change, **rien n'est envoyé**, la connexion s'arrête sans
   nouvel essai et l'état affiche les deux empreintes. Si vous avez remplacé ou
   réinitialisé la passerelle, saisissez la nouvelle empreinte. Vider le champ
   ne fait pas réapprendre un certificat.
 - **Identifiants refusés** (réponse 4 ou 5 de la passerelle, ou deux
-  connexions de suite fermées juste après l'envoi des identifiants) : arrêt
-  gardé dans `/data`, **aucun nouvel essai**, même après un redémarrage. Il se
-  lève en changeant la configuration (nouveaux identifiants après un nouvel
-  appairage), ou par « Tester la connexion » une fois qu'une connexion réussit.
+  connexions de suite fermées ou sans réponse dans les 15 s après l'envoi des
+  identifiants) : arrêt gardé dans `/data`, **aucun nouvel essai**, même après
+  un redémarrage. Il se lève en changeant la configuration (nouveaux
+  identifiants après un nouvel appairage, y compris saisis pendant que
+  l'intégration était arrêtée), ou par « Tester la connexion » une fois qu'une
+  connexion réussit. Pour reconnaître des identifiants changés, `/data` garde
+  8 bits d'une empreinte salée du couple refusé (jamais d'un couple accepté) :
+  inutilisable pour le retrouver ; dans 1 cas sur 256, des identifiants
+  nouveaux lui ressemblent et il faut cliquer sur « Tester la connexion ». Une
+  erreur de protocole de la passerelle est une coupure ordinaire (nouvel essai
+  espacé).
 - **Une seule session MQTT** à la fois ; reconnexions espacées de 10 s, 30 s,
   1 min, 2 min puis 5 min ; un conteneur qui redémarre en boucle se connecte
   au plus une fois par 10 s (heure de la tentative gardée dans `/data`).

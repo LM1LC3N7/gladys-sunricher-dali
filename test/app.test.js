@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
-import { DaliApp } from '../src/app.js';
+import { DaliApp, credentialsMark } from '../src/app.js';
 import { registerHandlers } from '../src/handlers.js';
 import { memoryStore } from '../src/store.js';
-import { FakeGateway, SERIAL } from './helpers/fakeGateway.js';
+import { FakeGateway, SERIAL, TEST_CA, TEST_CERT } from './helpers/fakeGateway.js';
 import { silentLogger, sleep, until } from './helpers/wait.js';
 
 const SN = SERIAL.toLowerCase();
@@ -27,7 +27,7 @@ async function setup(
     },
     devices,
   });
-  const app = new DaliApp({ gladys, logger, store });
+  const app = new DaliApp({ gladys, logger, store, ca: TEST_CA });
   registerHandlers(gladys, app, logger);
   t.after(async () => {
     app.stop();
@@ -314,4 +314,139 @@ test('the states stay under the per-minute budget with many lights', async (t) =
     gladys.fake.states.length <= 240,
     `${gladys.fake.states.length} states in the first minute`,
   );
+});
+
+test('s1_collision: a multi-sensor and a light at the same address are three devices', async (t) => {
+  const installation = {
+    devices: [
+      { devType: '020101', channel: 0, address: 5, name: 'Multi motion' },
+      { devType: '0202', channel: 0, address: 5, name: 'Multi lux' },
+      {
+        devType: '0101',
+        channel: 0,
+        address: 5,
+        name: 'Lamp 5',
+        status: { on: true, brightness: 300 },
+      },
+      // A second instance of the same nature at that address: the first is kept.
+      { devType: '020102', channel: 0, address: 5, name: 'Second motion' },
+    ],
+    groups: [{ channel: 0, groupId: 1, name: 'G', members: [5] }],
+    scenes: [],
+  };
+  const { gladys, gateway, logger } = await setup(t, { gateway: { installation } });
+  await ready(gladys);
+  const names = gladys.fake.discoveredDevices.map((d) => d.name);
+  assert.deepEqual(names, ['Lamp 5', 'G', 'Multi motion', 'Multi lux']);
+  assert.ok(logger.lines.some((l) => /second motion at 0-5/.test(l)));
+  gateway.push({
+    cmd: 'devStatus',
+    gwSn: SERIAL,
+    data: { devType: '020101', channel: 0, address: 5, property: [{ dpid: 2 }] },
+  });
+  gateway.push({
+    cmd: 'devStatus',
+    gwSn: SERIAL,
+    data: { devType: '0202', channel: 0, address: 5, property: [{ dpid: 4, value: 120 }] },
+  });
+  await until(() => gladys.fake.lastState(`ext:test-integration:motion:${SN}-0-5:motion`) === 1);
+  await until(
+    () => gladys.fake.lastState(`ext:test-integration:illuminance:${SN}-0-5:illuminance`) === 120,
+  );
+  await until(
+    () => gladys.fake.lastState(`ext:test-integration:light:${SN}-0-5:brightness`) === 30,
+  );
+  await until(() => gladys.fake.lastState(`ext:test-integration:group:${SN}-0-1:binary`) === 1);
+  assert.deepEqual(await gladys.fake.setValue({}, feature(gladys, 'light', 5, 'binary'), 0), {
+    success: true,
+  });
+  await until(() => gateway.commands('writeDev').length === 1);
+  assert.equal(gateway.commands('writeDev')[0].data[0].devType, '0101');
+});
+
+test('TLS: a first certificate not signed by the root stops, persisted; its fingerprint lifts it', async (t) => {
+  const store = memoryStore();
+  const { gladys, gateway, app } = await setup(t, {
+    gateway: { tls: true, cert: TEST_CERT },
+    store,
+  });
+  await until(() => store.data?.stop?.kind === 'certificate_untrusted');
+  assert.equal(gateway.connects.length, 0);
+  assert.equal(store.data.pin, null);
+  const presented = store.data.stop.presented;
+  assert.match(gladys.fake.connectionStatus.message.en, /not signed by Sunricher: nothing sent/);
+  app.memory.lastAttemptAt = 0;
+  await gladys.fake.configUpdated({ ...gladys.fake.config, tls_fingerprint: presented });
+  await ready(gladys);
+  assert.equal(gateway.connects.length, 1);
+  assert.equal(store.data.pin.fingerprint, presented);
+});
+
+test('TLS: /data refusing the pin: own status, no CONNECT, even with the test button', async (t) => {
+  const store = memoryStore();
+  store.save = async () => {
+    throw Object.assign(new Error('read-only file system'), { code: 'EROFS' });
+  };
+  const { gladys, gateway, app } = await setup(t, { gateway: { tls: true }, store });
+  await until(() =>
+    /could not be written to \/data/.test(gladys.fake.connectionStatus?.message?.en ?? ''),
+  );
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /changed/);
+  assert.equal(app.memory.pin, null);
+  const ack = await gladys.fake.action('test_connection', {});
+  assert.equal(ack.success, false);
+  await sleep(50);
+  assert.equal(gateway.connects.length, 0);
+  assert.equal(app.memory.pin, null);
+});
+
+test('refused credentials, then new ones typed while stopped: the stop is lifted at start', async (t) => {
+  const store = memoryStore();
+  const { gladys, gateway, app } = await setup(t, { gateway: { password: 'right' }, store });
+  await until(() => store.data?.stop?.kind === 'credentials_refused');
+  assert.match(store.data.stop.mark.salt, /^[0-9a-f]{16}$/);
+  assert.ok(!JSON.stringify(store.data).includes('dali-pass'));
+  // Same credentials at a restart: still stopped.
+  await app.startNow(gladys.fake.config);
+  await sleep(50);
+  assert.equal(gateway.connections, 1);
+  // New credentials in the configuration at a restart (no configUpdated): lifted.
+  app.memory.lastAttemptAt = 0;
+  gladys.fake.config = { ...gladys.fake.config, password: 'right' };
+  await app.startNow(gladys.fake.config);
+  await ready(gladys);
+  assert.equal(store.data.stop, null);
+});
+
+test('credentials mark: 8 bits, useless to brute force', () => {
+  const salt = '0123456789abcdef';
+  const refused = { username: 'user', password: 'secret' };
+  const mark = credentialsMark(salt, refused);
+  assert.ok(mark >= 0 && mark <= 255);
+  let matches = 0;
+  for (let i = 0; i < 20_000; i += 1) {
+    if (credentialsMark(salt, { username: 'user', password: `guess${i}` }) === mark) matches += 1;
+  }
+  // About 1 in 256 candidates match: the mark never points at the password.
+  assert.ok(matches > 30, `${matches} candidates share the mark`);
+});
+
+test('the time of the attempt is in /data before the connection opens', async (t) => {
+  const store = memoryStore();
+  let gateway;
+  const order = [];
+  const save = store.save.bind(store);
+  store.save = async (next) => {
+    order.push(['save', next.lastAttemptAt > 0, gateway?.connections ?? 0]);
+    return save(next);
+  };
+  ({ gateway } = await setup(t, { store }));
+  await until(() => gateway.connections === 1);
+  const first = order.find(([, attempt]) => attempt);
+  assert.deepEqual(first, ['save', true, 0]);
+});
+
+test('a lower-case 12-digit serial number is put in capitals', async (t) => {
+  const { gladys } = await setup(t, { config: { serial_number: SERIAL.toLowerCase() } });
+  await ready(gladys);
 });

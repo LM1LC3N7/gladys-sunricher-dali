@@ -53,3 +53,15 @@ test('an answer gives the credentials; a bad one gives nothing', () => {
   assert.equal(parseAnswer(Buffer.alloc(5000)), undefined);
   assert.equal(parseAnswer(Buffer.from('nope')), undefined);
 });
+
+test('a port given as text is taken, as the reference does', () => {
+  const answer = parseAnswer(
+    Buffer.from(JSON.stringify({ data: { gwSn: 'A1B2C3D4E5F6', port: '8883' } })),
+  );
+  assert.equal(answer.port, 8883);
+  assert.equal(
+    parseAnswer(Buffer.from(JSON.stringify({ data: { gwSn: 'A1B2C3D4E5F6', port: '70000' } })))
+      .port,
+    undefined,
+  );
+});

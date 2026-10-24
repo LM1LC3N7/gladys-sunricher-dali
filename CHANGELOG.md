@@ -31,4 +31,14 @@ the notes of the version's GitHub Release.
   is pressed.
 - A "Test the connection" button.
 
+### Security
+
+- TLS: on the first connection the certificate of the gateway must be signed
+  by the Sunricher root of PySrDaliGateway (shipped with the integration)
+  before it is pinned; a fingerprint typed in the configuration is accepted
+  as is. A pin that cannot be written to `/data` stops the connection, nothing
+  sent.
+- The pairing command runs with Docker logs off, read only, without
+  capabilities.
+
 [Unreleased]: https://github.com/LM1LC3N7/gladys-sunricher-dali/commits/main

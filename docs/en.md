@@ -40,11 +40,18 @@ command on the Gladys machine (or any computer of the same network with
 Node.js 22 or later):
 
 ```bash
-docker run --rm -it --network host ghcr.io/lm1lc3n7/gladys-sunricher-dali:<version> node scripts/pair.mjs
+docker run --rm -it --network host --log-driver none --read-only \
+  --cap-drop ALL --security-opt no-new-privileges \
+  ghcr.io/lm1lc3n7/gladys-sunricher-dali:<version> node scripts/pair.mjs
 ```
 
 (replace `<version>` with the installed version shown in Gladys; from a clone
 of the repository: `node scripts/pair.mjs`).
+
+`--network host` only serves to receive the multicast of your network; the
+container is removed at the end (`--rm`). `--log-driver none` keeps Docker
+from storing the output (so the password) in its logs; the other options take
+from the container every right it does not need.
 
 1. Run the command: it looks for gateways for 3 minutes.
 2. Press the **Reset** button of the gateway **once, briefly**.
@@ -52,25 +59,30 @@ of the repository: `node scripts/pair.mjs`).
    number**, the **user name**, the **password** and whether the gateway uses
    **TLS**.
 4. Copy these values into the configuration of the integration, then clear
-   the terminal: the password is shown there only (never written to a file or
-   a log).
+   the terminal: the password is shown there only (the command writes it to
+   no file; with `--log-driver none`, Docker does not keep it either).
 
 Options: `--serial <number>` (only that gateway), `--timeout <seconds>`. When
 several gateways answer, the first one with credentials is shown: run again
 with `--serial` for the others.
 
+If the gateway answers by multicast, its answer (so its credentials, only
+scrambled) can be read by any device of the network during the pairing: this
+comes with the protocol of the gateway.
+
 The request and the answer are scrambled with a fixed key published in
 PySrDaliGateway: a convention of the gateway protocol, not a protection. The
-`type: "HA"` field of the request is the one the manufacturer's library uses
-for third-party home automation systems.
+`type: "HA"` field of the request is the one of the library Sunricher
+publishes for Home Assistant; no other value is documented.
 
 ## 2. Configuration
 
 - **Address of the gateway**: its IP address (give it a fixed address in your
   router).
 - **MQTT port**: the one shown by the pairing (1883 by default).
-- **Serial number**: as shown (on the SR-GW-EDA, the MAC address in capitals
-  without separators; `A1:B2:…` is accepted). It is part of the MQTT topics:
+- **Serial number**: as shown (on the SR-GW-EDA, the MAC address without
+  separators; `A1:B2:…` is accepted, and 12 hexadecimal digits are put in
+  capitals; another format is kept as typed, capitals included). It is part of the MQTT topics:
   the integration only takes the messages of **this** serial number, and
   ignores a message that names another one.
 - **User name** and **password**: those of the pairing. The password is kept
@@ -78,8 +90,10 @@ for third-party home automation systems.
   never written in the logs.
 - **TLS**: only when the pairing says `TLS: yes`.
 - **Certificate fingerprint** (TLS only, optional): empty, the first
-  certificate seen is pinned and kept in `/data` **before** the password is
-  sent.
+  certificate seen must be signed by the Sunricher root authority (the one of
+  PySrDaliGateway, shipped with the integration); it is then pinned and kept
+  in `/data` **before** the password is sent. Typed, it is the one expected,
+  signed by Sunricher or not.
 - **Language of the names**: for the devices without a name in the gateway.
 
 The **Test the connection** button tries a connection (when none is under way)
@@ -89,15 +103,23 @@ and shows what was read.
 
 - **Without TLS** (how the gateway works by default), the user name and the
   password travel **in clear** on your local network: the status of the
-  integration says so. With TLS, the certificate is pinned; if it changes,
-  **nothing is sent**, the connection stops with no new try and the status
+  integration says so. With TLS, a first certificate not signed by Sunricher
+  is refused: **nothing is sent**, a stop with no new try, the status shows
+  its fingerprint (enter it only if you are sure this is your gateway). If
+  `/data` cannot keep the fingerprint, nothing is sent either. Then the
+  certificate is pinned; if it changes, **nothing is sent**, the connection stops with no new try and the status
   shows both fingerprints. If you replaced or reset the gateway, enter the new
   fingerprint. Emptying the field never relearns a certificate.
 - **Refused credentials** (answer 4 or 5 of the gateway, or two connections in
-  a row closed right after the credentials were sent): a stop kept in
-  `/data`, **no new try**, even after a restart. It is lifted by changing the
-  configuration (new credentials after a new pairing), or by "Test the
-  connection" once a connection works.
+  a row closed or unanswered within 15 s after the credentials were sent): a
+  stop kept in `/data`, **no new try**, even after a restart. It is lifted by
+  changing the configuration (new credentials after a new pairing, typed while
+  the integration was stopped included), or by "Test the connection" once a
+  connection works. To see that the credentials changed, `/data` keeps 8 bits
+  of a salted hash of the refused pair (never of an accepted one): useless to
+  find it back; in 1 case out of 256, new credentials look the same and "Test
+  the connection" is needed. A protocol error of the gateway is an ordinary
+  cut (a spaced new try).
 - **One MQTT session** at a time; reconnections spaced 10 s, 30 s, 1 min,
   2 min then 5 min; a container that restarts again and again connects at
   most once per 10 s (time of the attempt kept in `/data`).

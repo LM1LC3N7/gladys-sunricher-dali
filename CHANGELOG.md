@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-24
+
 ### Added
 
 - Connection to a Sunricher DALI gateway (SR-GW-EDA, DALI Center) through the
@@ -41,4 +43,5 @@ the notes of the version's GitHub Release.
 - The pairing command runs with Docker logs off, read only, without
   capabilities.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-sunricher-dali/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-sunricher-dali/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-sunricher-dali/releases/tag/v0.1.1

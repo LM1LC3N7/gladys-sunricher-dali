@@ -1,6 +1,6 @@
 {
   "name": "gladys-sunricher-dali",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Sunricher DALI gateways (DALI Center, SR-GW-EDA): lights, groups, scenes and sensors over the local MQTT of the gateway. Unofficial, not affiliated with Sunricher.",
   "type": "module",
